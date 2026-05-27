@@ -4,6 +4,7 @@ import os
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from src.rules.fraud_rules import evaluar_siniestro
+from src.ai_agent.claims_agent import redactar_explicacion
 
 # Cargar variables de entorno
 load_dotenv()
@@ -59,20 +60,27 @@ def listar_siniestros_priorizados():
         return resultados
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
+    
 @app.post("/api/evaluar")
 def evaluar_nuevo_siniestro(request: NuevoSiniestroRequest):
-    """
-    Endpoint en vivo para el formulario 'Nuevo Siniestro'.
-    Evalúa el riesgo al instante sin guardarlo en base de datos.
-    """
     siniestro = {
         "dias_entre_ocurrencia_reporte": request.dias_entre_ocurrencia_reporte,
         "monto_reclamado": request.monto_reclamado,
         "cobertura": request.cobertura
     }
-    asegurado = {
-        "reclamos_12_meses": request.reclamos_12_meses
-    }
-    
-    return evaluar_siniestro(siniestro, asegurado)
+    asegurado = { "reclamos_12_meses": request.reclamos_12_meses }
+
+    # 1. El motor de reglas calcula el riesgo (lo que ya tenías)
+    resultado = evaluar_siniestro(siniestro, asegurado)
+
+    # 2. La IA de Google Gemini lee el resultado y redacta la explicación
+    explicacion_ia = redactar_explicacion(
+        siniestro=siniestro,
+        nivel_riesgo=resultado['nivel_riesgo'],
+        score=resultado['score_reglas'],
+        alertas=resultado['alertas']
+    )
+
+    # 3. Le devuelves el paquete completo a tu compañero de frontend
+    resultado['explicacion_agente'] = explicacion_ia
+    return resultado
