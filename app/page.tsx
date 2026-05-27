@@ -10,7 +10,17 @@ import {
   ArrowRight,
   CheckCircle2,
   X,
+  Building2,
 } from "lucide-react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,7 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SemaforoBadge } from "@/components/semaforo-badge";
-import { MOCK_SINIESTROS, computeStats } from "@/lib/mock-data";
+import { MOCK_SINIESTROS, computeStats, computeAlertasPorRamo, computeProveedorRanking } from "@/lib/mock-data";
 import { getRamos } from "@/lib/data";
 import type { NivelRiesgo } from "@/lib/mock-data";
 
@@ -37,12 +47,6 @@ function formatMXN(amount: number) {
 
 const ALL_NIVELES: NivelRiesgo[] = ["rojo", "amarillo", "verde"];
 const ALL_RAMOS = getRamos();
-
-const NIVEL_CONFIG: Record<NivelRiesgo, { label: string; color: string; activeClass: string; borderClass: string }> = {
-  rojo:     { label: "Rojo",     color: "var(--rojo)",     activeClass: "bg-[var(--rojo)]/15 text-[var(--rojo)] border-[var(--rojo)]/40",     borderClass: "border-l-[var(--rojo)]" },
-  amarillo: { label: "Amarillo", color: "var(--amarillo)", activeClass: "bg-[var(--amarillo)]/15 text-[var(--amarillo)] border-[var(--amarillo)]/40", borderClass: "border-l-[var(--amarillo)]" },
-  verde:    { label: "Verde",    color: "var(--verde)",    activeClass: "bg-[var(--verde)]/15 text-[var(--verde)] border-[var(--verde)]/40",     borderClass: "border-l-[var(--verde)]" },
-};
 
 export default function DashboardPage() {
   // ── Filter state ─────────────────────────────────────────
@@ -103,6 +107,16 @@ export default function DashboardPage() {
   const stats = useMemo(() => computeStats(filtered), [filtered]);
   const pctRojo = stats.total > 0 ? Math.round((stats.rojo / stats.total) * 100) : 0;
   const pctAmarillo = stats.total > 0 ? Math.round((stats.amarillo / stats.total) * 100) : 0;
+
+  // ── Derived analytics ──────────────────────────────────
+  const alertasPorRamo = useMemo(() => computeAlertasPorRamo(filtered), [filtered]);
+  const proveedorRanking = useMemo(() => computeProveedorRanking(filtered), [filtered]);
+
+  function formatMXNShort(amount: number) {
+    if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}M`;
+    if (amount >= 1_000) return `$${(amount / 1_000).toFixed(0)}K`;
+    return new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 0 }).format(amount);
+  }
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -403,6 +417,131 @@ export default function DashboardPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Analytics grid: Bar chart + Provider ranking */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
+        {/* Alertas por ramo — bar chart */}
+        <Card className="border-white/[0.08] bg-white/[0.03] lg:col-span-3">
+          <CardHeader className="pb-3 px-5 pt-4 border-b border-white/[0.06]">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                <AlertTriangle className="h-4 w-4 text-[var(--amarillo)]" />
+                Alertas por Ramo
+              </CardTitle>
+              <Badge variant="outline" className="border-white/[0.08] text-muted-foreground text-[11px]">
+                {alertasPorRamo.reduce((s, r) => s + r.total, 0)} señales
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="p-5">
+            {alertasPorRamo.length === 0 ? (
+              <div className="flex items-center justify-center h-[220px] text-sm text-muted-foreground">
+                Sin datos para mostrar
+              </div>
+            ) : (
+              <div className="h-[220px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={alertasPorRamo} barGap={4} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 6%)" vertical={false} />
+                    <XAxis
+                      dataKey="ramo"
+                      tick={{ fill: "oklch(1 0 0 / 40%)", fontSize: 12 }}
+                      axisLine={{ stroke: "oklch(1 0 0 / 6%)" }}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      tick={{ fill: "oklch(1 0 0 / 40%)", fontSize: 11 }}
+                      axisLine={false}
+                      tickLine={false}
+                      allowDecimals={false}
+                    />
+                    <Tooltip
+                      cursor={{ fill: "oklch(1 0 0 / 4%)" }}
+                      contentStyle={{
+                        background: "oklch(0.158 0.018 264)",
+                        border: "1px solid oklch(1 0 0 / 10%)",
+                        borderRadius: "8px",
+                        fontSize: "12px",
+                        color: "oklch(0.96 0.006 264)",
+                      }}
+                    />
+                    <Bar dataKey="rojo" name="Rojo" radius={[3, 3, 0, 0]} maxBarSize={32} fill="var(--rojo)" />
+                    <Bar dataKey="amarillo" name="Amarillo" radius={[3, 3, 0, 0]} maxBarSize={32} fill="var(--amarillo)" />
+                    <Bar dataKey="verde" name="Verde" radius={[3, 3, 0, 0]} maxBarSize={32} fill="var(--verde)" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Proveedores ranking */}
+        <Card className="border-white/[0.08] bg-white/[0.03] lg:col-span-2">
+          <CardHeader className="pb-3 px-5 pt-4 border-b border-white/[0.06]">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                <Building2 className="h-4 w-4 text-muted-foreground" />
+                Proveedores con más Alertas
+              </CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            {proveedorRanking.length === 0 ? (
+              <div className="flex items-center justify-center h-[220px] text-sm text-muted-foreground">
+                Sin datos para mostrar
+              </div>
+            ) : (
+              <div className="overflow-auto max-h-[280px]">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-white/[0.06] hover:bg-transparent">
+                      <TableHead className="pl-5 text-[10px] text-muted-foreground/70 font-medium uppercase tracking-wider">
+                        Proveedor
+                      </TableHead>
+                      <TableHead className="text-[10px] text-muted-foreground/70 font-medium uppercase tracking-wider text-right">
+                        Alertas
+                      </TableHead>
+                      <TableHead className="text-[10px] text-muted-foreground/70 font-medium uppercase tracking-wider text-right pr-5">
+                        Monto
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {proveedorRanking.map((p) => (
+                      <TableRow
+                        key={p.id_proveedor}
+                        className="border-white/[0.04] hover:bg-white/[0.04] transition-colors"
+                      >
+                        <TableCell className="pl-5">
+                          <span className="text-sm font-medium">{p.nombre_proveedor}</span>
+                          <span className="block text-[11px] text-muted-foreground font-mono mt-0.5">
+                            {p.id_proveedor}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <span
+                            className="text-sm font-bold tabular-nums"
+                            style={{
+                              color: p.alertas > 3 ? "var(--rojo)" : p.alertas > 1 ? "var(--amarillo)" : "var(--verde)",
+                            }}
+                          >
+                            {p.alertas}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right pr-5">
+                          <span className="text-sm tabular-nums text-muted-foreground">
+                            {formatMXNShort(p.monto_total)}
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

@@ -546,5 +546,57 @@ export const MOCK_SINIESTROS: Siniestro[] = [
   },
 ];
 
+export interface RamoAlertas {
+  ramo: string;
+  total: number;
+  rojo: number;
+  amarillo: number;
+  verde: number;
+}
+
+export function computeAlertasPorRamo(siniestros: Siniestro[]): RamoAlertas[] {
+  const groups = new Map<string, { total: number; rojo: number; amarillo: number; verde: number }>();
+  for (const s of siniestros) {
+    if (!groups.has(s.ramo)) groups.set(s.ramo, { total: 0, rojo: 0, amarillo: 0, verde: 0 });
+    const g = groups.get(s.ramo)!;
+    g.total += s.alertas_activas.length;
+    if (s.nivel_riesgo === "rojo") g.rojo += s.alertas_activas.length;
+    else if (s.nivel_riesgo === "amarillo") g.amarillo += s.alertas_activas.length;
+    else g.verde += s.alertas_activas.length;
+  }
+  return Array.from(groups.entries())
+    .map(([ramo, v]) => ({ ramo, ...v }))
+    .sort((a, b) => b.total - a.total);
+}
+
+export interface ProveedorRanking {
+  id_proveedor: string;
+  nombre_proveedor: string;
+  casos: number;
+  alertas: number;
+  monto_total: number;
+}
+
+export function computeProveedorRanking(siniestros: Siniestro[]): ProveedorRanking[] {
+  const groups = new Map<string, ProveedorRanking>();
+  for (const s of siniestros) {
+    if (!groups.has(s.id_proveedor)) {
+      groups.set(s.id_proveedor, {
+        id_proveedor: s.id_proveedor,
+        nombre_proveedor: s.nombre_proveedor,
+        casos: 0,
+        alertas: 0,
+        monto_total: 0,
+      });
+    }
+    const g = groups.get(s.id_proveedor)!;
+    g.casos += 1;
+    g.alertas += s.alertas_activas.length;
+    g.monto_total += s.monto_reclamado;
+  }
+  return Array.from(groups.values())
+    .sort((a, b) => b.alertas - a.alertas);
+}
+
 // Legacy static stats (for components that don't use filters yet)
 export const MOCK_STATS = computeStats(MOCK_SINIESTROS);

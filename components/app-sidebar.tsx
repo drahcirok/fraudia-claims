@@ -75,7 +75,7 @@ export function AppSidebar() {
                 return (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton
-                      asChild
+                      render={<Link href={item.href} />}
                       isActive={isActive}
                       tooltip={item.label}
                       className={
@@ -84,15 +84,13 @@ export function AppSidebar() {
                           : "text-muted-foreground hover:text-foreground hover:bg-white/[0.05]"
                       }
                     >
-                      <Link href={item.href} className="flex items-center gap-3">
-                        <item.icon className="h-4 w-4 shrink-0" />
-                        <span className="group-data-[collapsible=icon]:hidden">
-                          {item.label}
-                        </span>
-                        {isActive && (
-                          <ChevronRight className="ml-auto h-3 w-3 opacity-50 group-data-[collapsible=icon]:hidden" />
-                        )}
-                      </Link>
+                      <item.icon className="h-4 w-4 shrink-0" />
+                      <span className="group-data-[collapsible=icon]:hidden">
+                        {item.label}
+                      </span>
+                      {isActive && (
+                        <ChevronRight className="ml-auto h-3 w-3 opacity-50 group-data-[collapsible=icon]:hidden" />
+                      )}
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );
