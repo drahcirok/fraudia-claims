@@ -1,3 +1,12 @@
+import os
+from supabase import create_client, Client
+from src.ai_agent.llm_provider import LLMProvider
+
+# Inicializamos el cliente de Supabase para este módulo
+url = os.environ.get("SUPABASE_URL")
+key = os.environ.get("SUPABASE_ANON_KEY")
+supabase: Client = create_client(url, key)
+
 def evaluar_siniestro(siniestro: dict, asegurado: dict) -> dict:
     """
     Evalúa un siniestro basado en las reglas de negocio del hackathon.
@@ -7,7 +16,24 @@ def evaluar_siniestro(siniestro: dict, asegurado: dict) -> dict:
     alertas = []
     es_critico = False
     es_amarillo = False
-
+    
+    # RF-07: NLP - Similitud de Narrativa (Textos clonados)
+    descripcion = siniestro.get("descripcion_hechos")
+    if descripcion:
+        ia = LLMProvider()
+        vector_nuevo = ia.get_embedding(descripcion)
+        
+        if vector_nuevo:
+            match_rpc = supabase.rpc(
+                'match_siniestros', 
+                {'query_embedding': vector_nuevo, 'match_threshold': 0.85, 'match_count': 1}
+            ).execute()
+            
+            if match_rpc.data and len(match_rpc.data) > 0:
+                similitud_pct = round(match_rpc.data[0]['similitud'] * 100, 1)
+                score += 30
+                alertas.append(f"RF-07: Narrativa Clonada (Similitud del {similitud_pct}%)")
+                
     # --- SEÑALES ACUMULATIVAS ---
     
     # Señal: Reporte tardío (Métricas de la tabla del reto)

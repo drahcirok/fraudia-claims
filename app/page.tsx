@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -33,9 +33,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SemaforoBadge } from "@/components/semaforo-badge";
-import { MOCK_SINIESTROS, computeStats, computeAlertasPorRamo, computeProveedorRanking } from "@/lib/mock-data";
-import { getRamos } from "@/lib/data";
-import type { NivelRiesgo } from "@/lib/mock-data";
+import { computeStats, computeAlertasPorRamo, computeProveedorRanking } from "@/lib/mock-data";
+import { getRamos, getSiniestros } from "@/lib/data";
+import type { NivelRiesgo, Siniestro } from "@/lib/data";
 
 function formatMXN(amount: number) {
   return new Intl.NumberFormat("es-MX", {
@@ -46,9 +46,22 @@ function formatMXN(amount: number) {
 }
 
 const ALL_NIVELES: NivelRiesgo[] = ["rojo", "amarillo", "verde"];
-const ALL_RAMOS = getRamos();
 
 export default function DashboardPage() {
+  // ── Data fetching state ──────────────────────────────────
+  const [datos, setDatos] = useState<Siniestro[]>([]);
+  const [ramosDisponibles, setRamosDisponibles] = useState<string[]>([]);
+
+  useEffect(() => {
+    // Cuando carga la página, traemos los datos reales del backend
+    getSiniestros().then((data) => {
+      setDatos(data);
+      // Extraemos los ramos únicos para el filtro
+      const ramosUnicos = Array.from(new Set(data.map((s) => s.ramo))).sort();
+      setRamosDisponibles(ramosUnicos);
+    });
+  }, []);
+
   // ── Filter state ─────────────────────────────────────────
   const [activeNiveles, setActiveNiveles] = useState<Set<NivelRiesgo>>(
     new Set(ALL_NIVELES)
@@ -67,7 +80,6 @@ export default function DashboardPage() {
     setActiveNiveles((prev) => {
       const next = new Set(prev);
       if (next.has(nivel)) {
-        // Don't allow deselecting all
         if (next.size === 1) return prev;
         next.delete(nivel);
       } else {
@@ -86,7 +98,7 @@ export default function DashboardPage() {
 
   // ── Filtered + sorted data ───────────────────────────────
   const filtered = useMemo(() => {
-    let list = [...MOCK_SINIESTROS].sort((a, b) => b.final_score - a.final_score);
+    let list = [...datos].sort((a, b) => b.final_score - a.final_score);
 
     if (activeNiveles.size < ALL_NIVELES.length) {
       list = list.filter((s) => activeNiveles.has(s.nivel_riesgo));
@@ -101,7 +113,7 @@ export default function DashboardPage() {
       list = list.filter((s) => s.fecha_ocurrencia <= fechaHasta);
     }
     return list;
-  }, [activeNiveles, selectedRamo, fechaDesde, fechaHasta]);
+  }, [datos, activeNiveles, selectedRamo, fechaDesde, fechaHasta]);
 
   // ── KPIs derived from filtered list ─────────────────────
   const stats = useMemo(() => computeStats(filtered), [filtered]);
@@ -125,7 +137,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Bandeja de Siniestros</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Casos ordenados por nivel de riesgo · Datos de demostración
+            Casos ordenados por nivel de riesgo
           </p>
         </div>
       </div>
@@ -245,7 +257,7 @@ export default function DashboardPage() {
               className="appearance-none rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 pr-7 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-white/20 cursor-pointer hover:bg-white/[0.06] transition-colors"
             >
               <option value="todos">Todos los ramos</option>
-              {ALL_RAMOS.map((r) => (
+              {ramosDisponibles.map((r) => (
                 <option key={r} value={r}>{r}</option>
               ))}
             </select>
@@ -309,7 +321,7 @@ export default function DashboardPage() {
           {filtered.length === 0 ? (
             <div className="py-16 text-center">
               <p className="text-sm text-muted-foreground">
-                Ningún caso coincide con los filtros activos.
+                Aún no hay casos que coincidan con los filtros activos o la base de datos está vacía.
               </p>
               <Button
                 variant="ghost"
@@ -354,7 +366,7 @@ export default function DashboardPage() {
                     <TableCell className="pl-6">
                       <Link href={`/siniestros/${siniestro.id_siniestro}`} className="block">
                         <span className="font-mono text-xs text-muted-foreground group-hover:text-foreground transition-colors">
-                          {siniestro.id_siniestro}
+                          {siniestro.id_siniestro.split("-")[0].substring(0,8)}...
                         </span>
                       </Link>
                     </TableCell>

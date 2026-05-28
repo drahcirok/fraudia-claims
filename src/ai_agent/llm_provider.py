@@ -29,28 +29,54 @@ class LLMProvider:
 
         elif self.provider_type == "openai":
             response = self.client.chat.completions.create(
-                model="gpt-5-nano-2025-08-07",
+                model="gpt-4o-mini", # <--- AQUÍ ESTÁ EL CAMBIO
                 messages=[
                     {"role": "system", "content": "Eres un asistente experto en seguros y antifraude."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3,
-                max_tokens=150
+                max_completion_tokens=150
             )
             return response.choices[0].message.content.strip()
 
-    def generate_embedding(self, text: str) -> list[float]:
-        """Convierte texto en vectores usando el LLM disponible"""
-        if self.provider_type == "google":
-            response = self.client.models.embed_content(
-                model="text-embedding-004",
-                contents=text,
-            )
-            return response.embeddings[0].values
+    def get_embedding(self, text: str) -> list[float]:
+        """Convierte un texto en un vector matemático usando el LLM disponible"""
+        try:
+            if self.provider_type == "google":
+                response = self.client.models.embed_content(
+                    model="text-embedding-004",
+                    contents=text,
+                )
+                return response.embeddings[0].values
 
-        elif self.provider_type == "openai":
-            response = self.client.embeddings.create(
-                input=text,
-                model="text-embedding-3-small"
+            elif self.provider_type == "openai":
+                response = self.client.embeddings.create(
+                    input=text,
+                    model="text-embedding-3-small"
+                )
+                return response.data[0].embedding
+        except Exception as e:
+            print(f"Error generando embedding: {e}")
+            return []
+        
+    def chat(self, user_message: str, context_data: str) -> str:
+        """Endpoint de chat interactivo con inyección de contexto de base de datos"""
+        if self.provider_type == "openai":
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": (
+                            "Eres FraudIA, un agente experto en riesgos para Aseguradora del Sur. "
+                            "Responde de forma concisa y profesional. NUNCA acuses directamente de fraude, "
+                            "usa términos como 'anomalía', 'patrón atípico' o 'posible riesgo'. "
+                            f"Basa tu respuesta en esta información extraída de la base de datos:\n{context_data}"
+                        )
+                    },
+                    {"role": "user", "content": user_message}
+                ],
+                max_completion_tokens=300
             )
-            return response.data[0].embedding
+            return response.choices[0].message.content.strip()
+        
+        return "Chat interactivo no implementado para Google aún."
