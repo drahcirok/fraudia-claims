@@ -6,9 +6,16 @@ import {
   type Stats,
 } from "./mock-data";
 
+// On Vercel, prefer the stable production domain (VERCEL_PROJECT_PRODUCTION_URL).
+// VERCEL_URL is the per-deployment URL, which is gated by Vercel Authentication
+// and returns 401 to server-side fetches — do NOT use it as the API base.
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ??
-  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:8001");
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : "http://localhost:8001");
 const USE_API = true;
 
 export type { Siniestro, NivelRiesgo, Stats };
