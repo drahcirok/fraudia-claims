@@ -54,24 +54,58 @@ def listar_siniestros_priorizados(
 ):
     """
     Bandeja semáforo. Soporta paginación y filtros: ?limit=20&offset=0&nivel=Rojo&ramo=Vehículos
+    Uses nested join (PostgREST FK) to avoid N+1 asegurado queries.
+    Falls back to separate query if FK not available.
     """
     try:
-        query = supabase.table("siniestros").select("*").order("score_reglas", desc=True)
-        if nivel:
-            query = query.eq("nivel_riesgo", nivel)
-        if ramo:
-            query = query.eq("ramo", ramo)
-        query = query.range(offset, offset + limit - 1)
-        res = query.execute()
+        # Exclude heavy columns: embedding_descripcion (~6KB/row), pdf_analysis, explicacion_agente
+        LIGHT_COLS = (
+            "id_siniestro,id_asegurado,id_proveedor,id_poliza,"
+            "ramo,cobertura,estado,fecha_ocurrencia,fecha_reporte,"
+            "monto_reclamado,monto_estimado,descripcion_hechos,"
+            "documentos_completos,dias_desde_inicio_poliza,"
+            "dias_entre_ocurrencia_reporte,sucursal,"
+            "score_reglas,score_anomalia,nivel_riesgo,alertas"
+        )
+        ASE_COLS = "id_asegurado,nombre_completo,reclamos_12_meses,reclamos_historico,perfil_riesgo"
 
-        # Fetch asegurados for join
-        asegurado_ids = list({s["id_asegurado"] for s in res.data if s.get("id_asegurado")})
-        res_ase = supabase.table("asegurados_sinteticos").select("*").in_("id_asegurado", asegurado_ids).execute() if asegurado_ids else type("R", (), {"data": []})()
-        ase_dict = {a["id_asegurado"]: a for a in res_ase.data}
+        # Layer 2: nested join — requires FK constraint on siniestros.id_asegurado
+        try:
+            query = supabase.table("siniestros").select(
+                f"{LIGHT_COLS}, asegurados_sinteticos({ASE_COLS})"
+            ).order("score_reglas", desc=True)
+            if nivel:
+                query = query.eq("nivel_riesgo", nivel)
+            if ramo:
+                query = query.eq("ramo", ramo)
+            query = query.range(offset, offset + limit - 1)
+            res = query.execute()
+            # If nested join worked, asegurados_sinteticos is already embedded
+            use_nested = True
+        except Exception:
+            # Fallback: separate query
+            query = supabase.table("siniestros").select(LIGHT_COLS).order("score_reglas", desc=True)
+            if nivel:
+                query = query.eq("nivel_riesgo", nivel)
+            if ramo:
+                query = query.eq("ramo", ramo)
+            query = query.range(offset, offset + limit - 1)
+            res = query.execute()
+            use_nested = False
+
+        if not use_nested:
+            asegurado_ids = list({s["id_asegurado"] for s in res.data if s.get("id_asegurado")})
+            res_ase = supabase.table("asegurados_sinteticos").select(ASE_COLS).in_("id_asegurado", asegurado_ids).execute() if asegurado_ids else type("R", (), {"data": []})()
+            ase_dict = {a["id_asegurado"]: a for a in res_ase.data}
+        else:
+            ase_dict = {}
 
         resultados = []
         for sin in res.data:
-            asegurado = ase_dict.get(sin.get("id_asegurado") or "", {})
+            if use_nested:
+                asegurado = sin.get("asegurados_sinteticos") or {}
+            else:
+                asegurado = ase_dict.get(sin.get("id_asegurado") or "", {})
             # Re-evaluate if no score yet in DB
             if not sin.get("score_reglas"):
                 evaluacion = evaluar_siniestro(sin, asegurado)
@@ -86,44 +120,61 @@ def listar_siniestros_priorizados(
 
 @app.get("/api/siniestros/{id}")
 def get_siniestro_detail(id: str):
-    """Full siniestro detail: JOIN asegurado+poliza+proveedor+docs + rules eval + AI explanation + top 3 similares."""
+    """Full siniestro detail: JOIN asegurado+poliza+proveedor+docs + rules eval + AI explanation (cached) + top 3 similares."""
     try:
-        res = supabase.table("siniestros").select("*").eq("id_siniestro", id).single().execute()
-        sin = res.data
+        # Layer 2: 1 nested join instead of 5 sequential queries
+        # Requires FK constraints. Falls back to sequential if FKs absent.
+        try:
+            res = supabase.table("siniestros").select(
+                "*, asegurados_sinteticos(*), polizas(*), proveedores(*), documentos(*)"
+            ).eq("id_siniestro", id).single().execute()
+            sin = res.data
+            asegurado = sin.pop("asegurados_sinteticos", None) or {}
+            poliza = sin.pop("polizas", None) or {}
+            proveedor = sin.pop("proveedores", None) or {}
+            docs = sin.pop("documentos", None) or []
+        except Exception:
+            # Fallback: sequential queries
+            res = supabase.table("siniestros").select("*").eq("id_siniestro", id).single().execute()
+            sin = res.data
 
-        # JOIN asegurado
-        asegurado = {}
-        if sin.get("id_asegurado"):
-            r = supabase.table("asegurados_sinteticos").select("*").eq("id_asegurado", sin["id_asegurado"]).execute()
-            asegurado = r.data[0] if r.data else {}
+            asegurado = {}
+            if sin.get("id_asegurado"):
+                r = supabase.table("asegurados_sinteticos").select("*").eq("id_asegurado", sin["id_asegurado"]).execute()
+                asegurado = r.data[0] if r.data else {}
 
-        # JOIN poliza
-        poliza = {}
-        if sin.get("id_poliza"):
-            r = supabase.table("polizas").select("*").eq("id_poliza", sin["id_poliza"]).execute()
-            poliza = r.data[0] if r.data else {}
+            poliza = {}
+            if sin.get("id_poliza"):
+                r = supabase.table("polizas").select("*").eq("id_poliza", sin["id_poliza"]).execute()
+                poliza = r.data[0] if r.data else {}
 
-        # JOIN proveedor
-        proveedor = {}
-        if sin.get("id_proveedor"):
-            r = supabase.table("proveedores").select("*").eq("id_proveedor", sin["id_proveedor"]).execute()
-            proveedor = r.data[0] if r.data else {}
+            proveedor = {}
+            if sin.get("id_proveedor"):
+                r = supabase.table("proveedores").select("*").eq("id_proveedor", sin["id_proveedor"]).execute()
+                proveedor = r.data[0] if r.data else {}
 
-        # JOIN documentos
-        docs = []
-        r = supabase.table("documentos").select("*").eq("id_siniestro", id).execute()
-        docs = r.data or []
+            r = supabase.table("documentos").select("*").eq("id_siniestro", id).execute()
+            docs = r.data or []
 
         # Rules evaluation
         evaluacion = evaluar_siniestro(sin, asegurado)
 
-        # AI explanation
-        explicacion = redactar_explicacion(
-            siniestro=sin,
-            nivel_riesgo=evaluacion["nivel_riesgo"],
-            score=evaluacion["score_reglas"],
-            alertas=evaluacion["alertas"],
-        )
+        # Layer 1: AI explanation — use cached value, compute + store only if absent
+        explicacion = sin.get("explicacion_agente")
+        if not explicacion:
+            explicacion = redactar_explicacion(
+                siniestro=sin,
+                nivel_riesgo=evaluacion["nivel_riesgo"],
+                score=evaluacion["score_reglas"],
+                alertas=evaluacion["alertas"],
+            )
+            # Cache for next request
+            try:
+                supabase.table("siniestros").update(
+                    {"explicacion_agente": explicacion}
+                ).eq("id_siniestro", id).execute()
+            except Exception:
+                pass  # Cache write failure is non-fatal
 
         # Top 3 similares via RPC (if embedding available)
         similares = []
@@ -138,13 +189,21 @@ def get_siniestro_detail(id: str):
             except Exception:
                 pass
 
-        # PDF analysis (RF-02 multimodal)
-        pdf_analysis = None
-        try:
-            from src.ai_agent.pdf_analyzer import analyze_siniestro_pdf
-            pdf_analysis = analyze_siniestro_pdf(sin)
-        except Exception:
-            pass
+        # Layer 1: PDF analysis — use cached value, compute + store only if absent
+        pdf_analysis = sin.get("pdf_analysis")
+        if not pdf_analysis:
+            try:
+                from src.ai_agent.pdf_analyzer import analyze_siniestro_pdf
+                pdf_analysis = analyze_siniestro_pdf(sin)
+                if pdf_analysis:
+                    try:
+                        supabase.table("siniestros").update(
+                            {"pdf_analysis": pdf_analysis}
+                        ).eq("id_siniestro", id).execute()
+                    except Exception:
+                        pass  # Cache write failure is non-fatal
+            except Exception:
+                pass
 
         return {
             **sin,

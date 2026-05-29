@@ -82,10 +82,14 @@ function mapBackendToUI(sin: any): Siniestro {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+export const PAGE_SIZE = 50;
+
 export async function getSiniestros(filters: SiniestroFilters = {}): Promise<Siniestro[]> {
   if (USE_API) {
-    const params = new URLSearchParams({ limit: "200" });
-    const res = await fetch(`${API_URL}/api/siniestros?${params}`, { cache: "no-store" });
+    const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
+    const res = await fetch(`${API_URL}/api/siniestros?${params}`, {
+      next: { revalidate: 30 },  // SWR: serve cached, revalidate in bg
+    });
     if (!res.ok) throw new Error("Error fetching siniestros");
     const rawData = await res.json();
     const listReal = rawData.map(mapBackendToUI);
@@ -95,6 +99,19 @@ export async function getSiniestros(filters: SiniestroFilters = {}): Promise<Sin
 
   const sorted = [...MOCK_SINIESTROS].sort((a, b) => b.final_score - a.final_score);
   return applyFilters(sorted, filters);
+}
+
+/** Fetch a specific page by offset — used by "Load more" button. */
+export async function getSiniestrosPage(
+  offset: number,
+  limit: number = PAGE_SIZE,
+): Promise<Siniestro[]> {
+  if (!USE_API) return [];
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  const res = await fetch(`${API_URL}/api/siniestros?${params}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Error fetching siniestros page");
+  const rawData = await res.json();
+  return (rawData as any[]).map(mapBackendToUI);
 }
 
 export async function getSiniestro(id: string): Promise<Siniestro | null> {
@@ -112,22 +129,21 @@ export async function getSiniestro(id: string): Promise<Siniestro | null> {
 }
 
 export async function getStats(filters: SiniestroFilters = {}): Promise<Stats> {
-  if (USE_API) {
-    try {
-      const res = await fetch(`${API_URL}/api/stats`, { cache: "no-store" });
-      if (res.ok) {
-        const raw = await res.json();
-        const siniestros = await getSiniestros(filters);
-        const stats = computeStats(siniestros);
-        // Enrich with backend monto_expuesto
-        return { ...stats, monto_expuesto: raw.monto_expuesto ?? stats.monto_expuesto };
-      }
-    } catch {
-      // fall through to computed stats
-    }
+  // Layer 3: getSiniestros() already fetches siniestros — share that result,
+  // enrich with backend monto_expuesto from /api/stats. No double fetch.
+  const [siniestros, backendStats] = await Promise.all([
+    getSiniestros(filters),
+    USE_API
+      ? fetch(`${API_URL}/api/stats`, { cache: "no-store" })
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null)
+      : Promise.resolve(null),
+  ]);
+  const stats = computeStats(siniestros);
+  if (backendStats?.monto_expuesto != null) {
+    return { ...stats, monto_expuesto: backendStats.monto_expuesto } as Stats & { monto_expuesto: number };
   }
-  const siniestros = await getSiniestros(filters);
-  return computeStats(siniestros);
+  return stats;
 }
 
 export function getRamos(): string[] {

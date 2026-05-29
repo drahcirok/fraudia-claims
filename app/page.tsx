@@ -13,6 +13,7 @@ import {
   Building2,
   Download,
   PiggyBank,
+  Loader2,
 } from "lucide-react";
 import {
   BarChart,
@@ -36,7 +37,7 @@ import {
 } from "@/components/ui/table";
 import { SemaforoBadge } from "@/components/semaforo-badge";
 import { computeStats, computeAlertasPorRamo, computeProveedorRanking } from "@/lib/mock-data";
-import { getRamos, getSiniestros } from "@/lib/data";
+import { getRamos, getSiniestros, getSiniestrosPage, PAGE_SIZE } from "@/lib/data";
 import type { NivelRiesgo, Siniestro } from "@/lib/data";
 
 function formatMXN(amount: number) {
@@ -53,16 +54,52 @@ export default function DashboardPage() {
   // ── Data fetching state ──────────────────────────────────
   const [datos, setDatos] = useState<Siniestro[]>([]);
   const [ramosDisponibles, setRamosDisponibles] = useState<string[]>([]);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [totalCount, setTotalCount] = useState<number | null>(null);
 
   useEffect(() => {
-    // Cuando carga la página, traemos los datos reales del backend
-    getSiniestros().then((data) => {
+    // Initial load: first page + total count
+    Promise.all([
+      getSiniestros(),
+      fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/stats`)
+        .then((r) => r.ok ? r.json() : null)
+        .catch(() => null),
+    ]).then(([data, stats]) => {
       setDatos(data);
-      // Extraemos los ramos únicos para el filtro
       const ramosUnicos = Array.from(new Set(data.map((s) => s.ramo))).sort();
       setRamosDisponibles(ramosUnicos);
+      if (stats?.total) {
+        setTotalCount(stats.total);
+        setHasMore(data.length < stats.total);
+      } else {
+        setHasMore(data.length === PAGE_SIZE);
+      }
     });
   }, []);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const nextPage = await getSiniestrosPage(datos.length);
+      if (nextPage.length === 0) {
+        setHasMore(false);
+        return;
+      }
+      setDatos((prev) => {
+        // De-dupe by id in case of overlap
+        const seen = new Set(prev.map((s) => s.id_siniestro));
+        const fresh = nextPage.filter((s) => !seen.has(s.id_siniestro));
+        const merged = [...prev, ...fresh];
+        if (totalCount !== null && merged.length >= totalCount) setHasMore(false);
+        if (nextPage.length < PAGE_SIZE) setHasMore(false);
+        return merged;
+      });
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [datos.length, loadingMore, hasMore, totalCount]);
 
   // ── Filter state ─────────────────────────────────────────
   const [activeNiveles, setActiveNiveles] = useState<Set<NivelRiesgo>>(
@@ -480,6 +517,36 @@ export default function DashboardPage() {
             </Table>
           )}
         </CardContent>
+
+        {/* ── Load more footer ─────────────────────────────── */}
+        <div className="flex items-center justify-between border-t border-white/[0.06] px-6 py-3">
+          <p className="text-xs text-muted-foreground">
+            {totalCount !== null
+              ? `Mostrando ${datos.length} de ${totalCount} casos`
+              : `${datos.length} casos cargados`}
+          </p>
+          {hasMore ? (
+            <Button
+              id="btn-cargar-mas"
+              variant="outline"
+              size="sm"
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="gap-2 border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.08] text-xs"
+            >
+              {loadingMore ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Cargando...
+                </>
+              ) : (
+                <>Cargar más casos</>
+              )}
+            </Button>
+          ) : (
+            <span className="text-xs text-muted-foreground/50">Todos los casos cargados</span>
+          )}
+        </div>
       </Card>
 
       {/* Analytics grid: Bar chart + Provider ranking */}
