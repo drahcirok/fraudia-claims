@@ -6,7 +6,9 @@ import {
   type Stats,
 } from "./mock-data";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ??
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:8001");
 const USE_API = true;
 
 export type { Siniestro, NivelRiesgo, Stats };
