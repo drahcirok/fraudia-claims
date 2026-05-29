@@ -1,13 +1,11 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "rewrites": [
-    { "source": "/api/py/:path*", "destination": "/api/index" },
-    { "source": "/api/siniestros/:path*", "destination": "/api/index" },
-    { "source": "/api/stats", "destination": "/api/index" },
-    { "source": "/api/proveedores/:path*", "destination": "/api/index" },
-    { "source": "/api/asegurados/:path*", "destination": "/api/index" },
-    { "source": "/api/red", "destination": "/api/index" },
-    { "source": "/api/evaluar", "destination": "/api/index" },
-    { "source": "/api/upload", "destination": "/api/index" }
+  "builds": [
+    { "src": "api/index.py", "use": "@vercel/python" },
+    { "src": "package.json", "use": "@vercel/next" }
+  ],
+  "routes": [
+    { "src": "/api/py/(.*)", "dest": "api/index.py" },
+    { "src": "/api/(siniestros|stats|proveedores|asegurados|red|evaluar|upload)(.*)", "dest": "api/index.py" },
+    { "src": "/(.*)", "dest": "/$1" }
   ]
 }
